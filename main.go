@@ -292,14 +292,22 @@ func assembleJWT(serializedHeaders []byte, serializedToken []byte, signature []b
 // within the JWT system, which is the primary reason this function is required.
 func jwtAlgFromSSHSignature(signature *ssh.Signature) string {
 	switch signature.Format {
+
+	// Define the translations for ECDSA signature algorithms
+	// See https://docs.mashery.com/connectorsguide/GUID-B5131DD5-C60F-4979-81C3-E0FC79ABA309.html
 	case ssh.KeyAlgoECDSA256:
 		return "ES256"
 	case ssh.KeyAlgoECDSA384:
 		return "ES384"
 	case ssh.KeyAlgoECDSA521:
 		return "ES512"
+
+	// Define the translation for Edwards curve signatures
+	// See https://connect2id.com/products/nimbus-jose-jwt/examples/jws-with-eddsa
 	case ssh.KeyAlgoED25519:
 		return "EdDSA"
+
+	// Define translations for RSA signatures
 	case ssh.KeyAlgoRSA:
 		// This should not occur since we are specifically selecting the algorithm type
 		// when using RSA keys for signing operations, but this error message is here
@@ -310,13 +318,19 @@ func jwtAlgFromSSHSignature(signature *ssh.Signature) string {
 		// TL;DR: This should never occur, and if we were to allow it to occur it could
 		// be dangerous.
 		log.Fatalf("ssh-rsa signatures are forbidden; rsa-sha2-512 was expected instead")
+	case ssh.KeyAlgoRSASHA256:
+		return "RS256"
 	case ssh.KeyAlgoRSASHA512:
 		return "RS512"
+
+	// Signatures other than the types defined above are unexpected and unsupported
 	default:
 		log.Fatalf("unsupported signature format: %+v", signature)
 	}
 
-	// This point should be unreachable due to the default case above
+	// This point should be unreachable due to the default case above, but this
+	// satisfies a compiler error about missing returns and protects against bugs
+	// in the above code.
 	panic("unreachable")
 }
 
