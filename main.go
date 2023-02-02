@@ -170,7 +170,7 @@ func parseKeyFile(path string) interface{} {
 	// Read the key file
 	contents, err := os.ReadFile(path)
 	if err != nil {
-		log.Fatalf("failed to read %v: %v", arguments.keyFilePath, err)
+		log.Fatalf("failed to read %v: %v", path, err)
 	}
 
 	// Parse the key file
