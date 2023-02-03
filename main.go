@@ -80,6 +80,10 @@ func main() {
 		// Load the key from the filesystem
 		key := parseKeyFile(arguments.keyFilePath)
 
+		// Get the JWK key ID of this SSH key
+		keyID := keyFileBasedKeyID(key)
+		log.Printf("kid: %v", keyID)
+
 		// Build the payload of the JWT using the command line arguments
 		payload := buildPayload(arguments.host, arguments.duration, defaultKeyComment())
 
@@ -87,17 +91,22 @@ func main() {
 		signer := keyFileBasedSigningFunc(key)
 
 		// Sign and print the token
-		token := signPayload(signer, payload)
+		token := signPayload(keyID, signer, payload)
 		fmt.Printf("%v\n", token)
 	} else {
 		// Connect to the ssh-agent
 		agentClient := connectAgent()
+
 
 		// Select the key for authenticating to the API
 		key, err := selectSSHKey(agentClient, arguments.agentKey)
 		if err != nil {
 			log.Fatalf("failed to find ssh-agent key (%v): %v", arguments.agentKey, err)
 		}
+
+		// Get the JWK key ID of this SSH key
+		keyID := agentBasedKeyID(key)
+		log.Printf("kid: %v", keyID)
 
 		// Build the payload of the JWT using the command line arguments
 		payload := buildPayload(arguments.host, arguments.duration, key.Comment)
@@ -106,7 +115,7 @@ func main() {
 		signer := agentBasedSigningFunc(agentClient, key)
 
 		// Sign and print the token
-		token := signPayload(signer, payload)
+		token := signPayload(keyID, signer, payload)
 		fmt.Printf("%v\n", token)
 	}
 }
@@ -243,28 +252,35 @@ func buildPayload(host string, duration int, user string) []byte {
 	return serializedToken
 }
 
-func signPayload(signer signingFunc, payload []byte) string {
-	// Sign the JWT
-	signature, err := signer(payload)
+func signPayload(keyID string, signer signingFunc, payload []byte) string {
+	// Produce an example signature for getting basic parameters out
+	exampleSignature, err := signer([]byte("A"))
 	if err != nil {
-		log.Fatalf("failed to sign: %v", err)
+		log.Fatalf("failed to create example signature: %v", err)
 	}
 
 	// Build the JWT headers
 	headers := make(map[string]string)
 	headers["typ"] = "JWT"
-	headers["alg"] = jwtAlgFromSSHSignature(signature)
+	headers["kid"] = keyID
+	headers["alg"] = jwtAlgFromSSHSignature(exampleSignature)
 	serializedHeaders, err := json.Marshal(headers)
 	if err != nil {
 		log.Fatalf("failed to serialize headers: %v", err)
 	}
 	log.Printf("headers: %+v", headers)
 
-	log.Printf("signed: %+v", signature)
+	stringToSign := b64.RawURLEncoding.EncodeToString(serializedHeaders) + "." + b64.RawURLEncoding.EncodeToString(payload)
+	log.Printf("stringToSign: %v", stringToSign)
+
+	// Produce the actual signature for the final JWT
+	signature, err := signer([]byte(stringToSign))
+	if err != nil {
+		log.Fatalf("failed to sign empty string: %v", err)
+	}
 	
-	// Encode the JWT
-	encodedJWT := assembleJWT(serializedHeaders, payload, signature.Blob)
-	return encodedJWT
+	// Assemble the final JWT
+	return stringToSign + "." + b64.RawURLEncoding.EncodeToString(signature.Blob)
 }
 
 // connectAgent returns a connected client for the ssh-agent
@@ -277,14 +293,6 @@ func connectAgent() agent.ExtendedAgent {
 	}
 
 	return agent.NewClient(connection)
-}
-
-// assembleJWT builds the final JWT from its components
-func assembleJWT(serializedHeaders []byte, serializedToken []byte, signature []byte) string {
-	b64Headers := b64.RawStdEncoding.EncodeToString(serializedHeaders)
-	b64Token := b64.RawStdEncoding.EncodeToString(serializedToken)
-	b64Signature := b64.RawStdEncoding.EncodeToString(signature)
-	return strings.Join([]string{b64Headers, b64Token, b64Signature}, ".")
 }
 
 // jwtAlgFromSSHSignature returns the JWT signature algorithm that corresponds to the given SSH signature format.
@@ -453,3 +461,17 @@ func readPassword(prompt string) ([]byte, error) {
 	// Return the password that was read, triggering the defer calls above
 	return password, nil
 }
+
+func keyFileBasedKeyID(key interface{}) string {
+	signer, err := ssh.NewSignerFromKey(key)
+	if err != nil {
+		log.Fatalf("failed to create signer from key: %v", err)
+	}
+
+	return ssh.FingerprintSHA256(signer.PublicKey())
+}
+
+func agentBasedKeyID(key *agent.Key) string {
+	return ssh.FingerprintSHA256(key)
+}
+
