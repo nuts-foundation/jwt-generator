@@ -27,7 +27,11 @@ import (
 	"golang.org/x/term"
 
 	// The jwx library is used to build tokens, but signing is performed outside the library
+	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jwt"
+
+	// The uuid library is used to generate JWT IDs
+	"github.com/google/uuid"
 )
 
 type signingFunc func([]byte) (*ssh.Signature, error)
@@ -40,6 +44,7 @@ var arguments struct {
 	agentKey string
 	keyFilePath string
 
+	exportAuthorizedKey bool
 	listKeys bool
 	verbose bool
 }
@@ -47,11 +52,12 @@ var arguments struct {
 // init sets up the command line arguments
 func init() {
 	flag.StringVar(&arguments.host, "host", "", "hostname of nuts node")
-	flag.StringVar(&arguments.agentKey, "key", "", "SSH agent key specification")
-	flag.StringVar(&arguments.keyFilePath, "i", "", "SSH key file path")
+	flag.StringVar(&arguments.agentKey, "key", "", "agent key specification")
+	flag.StringVar(&arguments.keyFilePath, "i", "", "key file path")
 	flag.BoolVar(&arguments.listKeys, "list", false, "list SSH keys from ssh-agent")
 	flag.BoolVar(&arguments.verbose, "verbose", false, "enable logging output")
 	flag.IntVar(&arguments.duration, "duration", 300, "duration in seconds of the token validity")
+	flag.BoolVar(&arguments.exportAuthorizedKey, "export-authorized-key", false, "Export the authorized_keys format")
 }
 
 func main() {
@@ -59,13 +65,19 @@ func main() {
 	flag.Parse()
 
 	// Check command line syntax
-	if !arguments.listKeys && arguments.host == "" {
+	if !arguments.listKeys && !arguments.exportAuthorizedKey && arguments.host == "" {
 		log.Fatal("syntax error: missing host argument")
 	}
 	
 	// Disable logging unless --verbose was specified
 	if !arguments.verbose {
 		log.SetOutput(io.Discard)
+	}
+
+	// Optionally export the key in authorized_keys format
+	if arguments.exportAuthorizedKey {
+		exportAuthorizedKey(arguments.keyFilePath)
+		return
 	}
 
 	// Optionally list the keys available in the ssh-agent
@@ -232,6 +244,7 @@ func buildPayload(host string, duration int, user string) []byte {
 
 	// Create the JWT
 	token, err := jwt.NewBuilder().
+		JwtID(uuid.NewString()).
 		Subject(user).
 		Issuer(user).
 		IssuedAt(now).
@@ -473,5 +486,55 @@ func keyFileBasedKeyID(key interface{}) string {
 
 func agentBasedKeyID(key *agent.Key) string {
 	return ssh.FingerprintSHA256(key)
+}
+
+func exportAuthorizedKey(path string) {
+	// Ensure a path was passed
+	if path == "" {
+		log.Fatal("missing key file argument -i")
+	}
+
+	// Read the key file
+	keyData, err := os.ReadFile(path)
+	if err != nil {
+		log.Fatalf("unable to read %v: %v", path, err)
+	}
+
+	// Try to parse the key as a JWK, then PEM if that doesn't work
+	var key jwk.Key
+	key, err = jwk.ParseKey(keyData)
+	if err != nil {
+		log.Printf("unable to parse %v as JWK, trying PEM: %v", path, err)
+
+		// Try to parse again as PEM
+		key, err = jwk.ParseKey(keyData, jwk.WithPEM(true))
+		if err != nil {
+			log.Fatalf("unable to parse %v as PEM, giving up: %v", path, err)
+		}
+	}
+
+	// Convert the key to its raw key type from crypto/*
+	var rawKey interface{}
+	if err := key.Raw(&rawKey); err != nil {
+		log.Fatalf("unable to convert to raw key: %v", err)
+	}
+
+	// For the following steps we will ultimately need an ssh public key
+	var pubKey ssh.PublicKey
+
+	// Convert the rawKey into an SSH signer, which works if rawKey is a private key, but not public key
+	if signer, err := ssh.NewSignerFromKey(rawKey); err == nil {
+		pubKey = signer.PublicKey()
+	} else {
+		// Since creating a signer from the key failed perhaps we were given a public key, so try
+		// creating an ssh.PublicKey directly from the rawKey
+		if pubKey, err = ssh.NewPublicKey(rawKey); err != nil {
+			log.Fatalf("unable to create ssh.Signer or ssh.PublicKey from %T", rawKey)
+		}
+	}
+
+	// Print the authorized_keys entry format for the given public key
+	authorizedKey := ssh.MarshalAuthorizedKey(pubKey)
+	fmt.Printf(string(authorizedKey))
 }
 
