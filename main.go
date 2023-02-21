@@ -45,6 +45,8 @@ var arguments struct {
 	keyFilePath string
 
 	exportAuthorizedKey bool
+	exportJWKThumbprint bool
+	exportSSHFingerprint bool
 	listKeys bool
 	verbose bool
 }
@@ -58,6 +60,8 @@ func init() {
 	flag.BoolVar(&arguments.verbose, "verbose", false, "enable logging output")
 	flag.IntVar(&arguments.duration, "duration", 300, "duration in seconds of the token validity")
 	flag.BoolVar(&arguments.exportAuthorizedKey, "export-authorized-key", false, "Export the authorized_keys format")
+	flag.BoolVar(&arguments.exportJWKThumbprint, "export-jwk-thumbprint", false, "Export the JWK SHA256 thumbprint")
+	flag.BoolVar(&arguments.exportSSHFingerprint, "export-ssh-fingerprint", false, "Export the SSH SHA256 fingerprint")
 }
 
 func main() {
@@ -65,7 +69,7 @@ func main() {
 	flag.Parse()
 
 	// Check command line syntax
-	if !arguments.listKeys && !arguments.exportAuthorizedKey && arguments.host == "" {
+	if !arguments.listKeys && !arguments.exportAuthorizedKey && !arguments.exportSSHFingerprint && !arguments.exportJWKThumbprint && arguments.host == "" {
 		log.Fatal("syntax error: missing host argument")
 	}
 	
@@ -77,6 +81,18 @@ func main() {
 	// Optionally export the key in authorized_keys format
 	if arguments.exportAuthorizedKey {
 		exportAuthorizedKey(arguments.keyFilePath)
+		return
+	}
+
+	// Optionally export the key fingerprint in SSH SHA256 format
+	if arguments.exportSSHFingerprint {
+		exportSSHFingerprint(arguments.keyFilePath)
+		return
+	}
+
+	// Optionally export the key thumbprint in JWK SHA256 format
+	if arguments.exportJWKThumbprint {
+		exportJWKThumbprint(arguments.keyFilePath)
 		return
 	}
 
@@ -489,6 +505,35 @@ func agentBasedKeyID(key *agent.Key) string {
 }
 
 func exportAuthorizedKey(path string) {
+	// Load an SSH public key from the given path
+	publicKey := loadSSHPublicKey(path)
+
+	// Print the authorized_keys entry format for the given public key
+	authorizedKey := ssh.MarshalAuthorizedKey(publicKey)
+	fmt.Println(string(authorizedKey))
+}
+
+func exportSSHFingerprint(path string) {
+	// Load an SSH public key from the given path
+	publicKey := loadSSHPublicKey(path)
+
+	// Generate and print the fingerprint
+	fingerprint := ssh.FingerprintSHA256(publicKey)
+	fmt.Println(fingerprint)
+}
+
+func exportJWKThumbprint(path string) {
+	// Load the JWK key stored in the file
+	key := loadJWKKey(path)
+
+	// Build the JWK thumbprint for the key
+	jwk.AssignKeyID(key)
+
+	// Print the generated key ID
+	fmt.Println(key.KeyID())
+}
+
+func loadJWKKey(path string) jwk.Key {
 	// Ensure a path was passed
 	if path == "" {
 		log.Fatal("missing key file argument -i")
@@ -513,6 +558,13 @@ func exportAuthorizedKey(path string) {
 		}
 	}
 
+	return key
+}
+
+func loadSSHPublicKey(path string) ssh.PublicKey {
+	// Load the jwk.Key contained in this path
+	key := loadJWKKey(path)
+
 	// Convert the key to its raw key type from crypto/*
 	var rawKey interface{}
 	if err := key.Raw(&rawKey); err != nil {
@@ -533,8 +585,6 @@ func exportAuthorizedKey(path string) {
 		}
 	}
 
-	// Print the authorized_keys entry format for the given public key
-	authorizedKey := ssh.MarshalAuthorizedKey(pubKey)
-	fmt.Printf(string(authorizedKey))
+	return pubKey
 }
 
