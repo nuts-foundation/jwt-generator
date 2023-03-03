@@ -6,7 +6,7 @@ A JWT generator for authenticating to nuts-node services
 nuts-jwt-generator -i <path-to-key> --export-ssh-fingerprint
 ```
 
-## Generating the JWK Thumbtprint of a Key
+## Generating the JWK Thumbprint of a Key
 ```
 nuts-jwt-generator -i <path-to-key> --export-jwk-thumbprint
 ```
