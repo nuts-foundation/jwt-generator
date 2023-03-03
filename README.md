@@ -10,3 +10,8 @@ nuts-jwt-generator -i <path-to-key> --export-ssh-fingerprint
 ```
 nuts-jwt-generator -i <path-to-key> --export-jwk-thumbprint
 ```
+
+## Generating the SSH authirozed_keys Form of a Key
+```
+nuts-jwt-generator -i <path-to-key> --export-authorized-key
+```
