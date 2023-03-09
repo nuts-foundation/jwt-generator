@@ -27,11 +27,12 @@ import (
 	"golang.org/x/term"
 
 	// The jwx library is used to build tokens, but signing is performed outside the library
-	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jwt"
 
 	// The uuid library is used to generate JWT IDs
 	"github.com/google/uuid"
+
+	"github.com/nuts-foundation/jwt-generator/internal/keyring"
 )
 
 type signingFunc func([]byte) (*ssh.Signature, error)
@@ -506,7 +507,16 @@ func agentBasedKeyID(key *agent.Key) string {
 
 func exportAuthorizedKey(path string) {
 	// Load an SSH public key from the given path
-	publicKey := loadSSHPublicKey(path)
+	key, err := keyring.Open(path)
+	if err != nil {
+		log.Fatalf("failed to open %s: %v", path, err)
+	}
+
+	// Convert the key to an ssh.PublicKey interface
+	publicKey, err := key.SSHPublicKey()
+	if err != nil {
+		log.Fatalf("failed to convert to ssh.PublicKey: %v", err)
+	}
 
 	// Print the authorized_keys entry format for the given public key
 	authorizedKey := ssh.MarshalAuthorizedKey(publicKey)
@@ -514,77 +524,33 @@ func exportAuthorizedKey(path string) {
 }
 
 func exportSSHFingerprint(path string) {
-	// Load an SSH public key from the given path
-	publicKey := loadSSHPublicKey(path)
+	// Load the specified key
+	key, err := keyring.Open(path)
+	if err != nil {
+		log.Fatalf("error opening %s: %v", path, err)
+	}
 
 	// Generate and print the fingerprint
-	fingerprint := ssh.FingerprintSHA256(publicKey)
+	fingerprint, err := key.SSHFingerprintSHA256()
+	if err != nil {
+		log.Fatalf("error generating fingerprint: %v", err)
+	}
 	fmt.Println(fingerprint)
 }
 
 func exportJWKThumbprint(path string) {
-	// Load the JWK key stored in the file
-	key := loadJWKKey(path)
-
-	// Build the JWK thumbprint for the key
-	jwk.AssignKeyID(key)
-
-	// Print the generated key ID
-	fmt.Println(key.KeyID())
-}
-
-func loadJWKKey(path string) jwk.Key {
-	// Ensure a path was passed
-	if path == "" {
-		log.Fatal("missing key file argument -i")
-	}
-
-	// Read the key file
-	keyData, err := os.ReadFile(path)
+	// Load the specified key
+	key, err := keyring.Open(path)
 	if err != nil {
-		log.Fatalf("unable to read %v: %v", path, err)
+		log.Fatalf("error opening %s: %v", path, err)
 	}
 
-	// Try to parse the key as a JWK, then PEM if that doesn't work
-	var key jwk.Key
-	key, err = jwk.ParseKey(keyData)
+	// Generate the thumbprint
+	thumbprint, err := key.JWKThumbprintSHA256()
 	if err != nil {
-		log.Printf("unable to parse %v as JWK, trying PEM: %v", path, err)
-
-		// Try to parse again as PEM
-		key, err = jwk.ParseKey(keyData, jwk.WithPEM(true))
-		if err != nil {
-			log.Fatalf("unable to parse %v as PEM, giving up: %v", path, err)
-		}
+		log.Fatalf("error generating fingerprint: %v", err)
 	}
 
-	return key
+	// Print the thumbprint
+	fmt.Println(thumbprint)
 }
-
-func loadSSHPublicKey(path string) ssh.PublicKey {
-	// Load the jwk.Key contained in this path
-	key := loadJWKKey(path)
-
-	// Convert the key to its raw key type from crypto/*
-	var rawKey interface{}
-	if err := key.Raw(&rawKey); err != nil {
-		log.Fatalf("unable to convert to raw key: %v", err)
-	}
-
-	// For the following steps we will ultimately need an ssh public key
-	var pubKey ssh.PublicKey
-
-	// Convert the rawKey into an SSH signer, which works if rawKey is a private key, but not public key
-	if signer, err := ssh.NewSignerFromKey(rawKey); err == nil {
-		pubKey = signer.PublicKey()
-	} else {
-		// Since creating a signer from the key failed perhaps we were given a public key, so try
-		// creating an ssh.PublicKey directly from the rawKey
-		if pubKey, err = ssh.NewPublicKey(rawKey); err != nil {
-			log.Fatalf("unable to create ssh.Signer or ssh.PublicKey from %T", rawKey)
-		}
-	}
-
-	return pubKey
-}
-
