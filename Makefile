@@ -1,5 +1,7 @@
 APP:=nuts-jwt-generator
 
+default: build
+
 .PHONY: release
 release:
 	rm -fr release

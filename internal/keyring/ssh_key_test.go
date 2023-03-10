@@ -11,6 +11,7 @@ type sshKeyTest struct {
 	keyTest
 	privateKey string
 	publicKey  string
+	passphrase string
 }
 
 func (s *sshKeyTest) run(t *testing.T) {
@@ -18,7 +19,13 @@ func (s *sshKeyTest) run(t *testing.T) {
 	var err error
 
 	t.Run("PrivateKey", func(t *testing.T) {
-		key, err = ParseString(s.privateKey)
+		// Use either ParseString or ParseWithPassphrase, depending on
+		// whether a passphrase was provided
+		if s.passphrase == "" {
+			key, err = ParseString(s.privateKey)
+		} else {
+			key, err = ParseWithPassphrase([]byte(s.privateKey), []byte(s.passphrase))
+		}
 		require.NoError(t, err)
 		require.NotNil(t, key)
 		require.True(t, key.IsPrivate())

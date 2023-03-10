@@ -9,6 +9,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -16,9 +17,11 @@ import (
 	"os"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
+	"github.com/lestrrat-go/jwx/v2/jws"
 	"github.com/lestrrat-go/jwx/v2/jwt"
 )
 
@@ -32,6 +35,7 @@ type Key interface {
 	PublicKey() (Key, error)
 	Raw() (interface{}, error)
 	SignJWT(jwt.Token) ([]byte, error)
+	SignJWTWithAgent(agent.ExtendedAgent, jwt.Token) ([]byte, error)
 	SSHFingerprintSHA256() (string, error)
 	SSHPublicKey() (ssh.PublicKey, error)
 }
@@ -43,13 +47,18 @@ type keyImpl struct {
 
 // Open reads a key from file, returning a Key
 func Open(path string) (Key, error) {
+	return OpenWithPassphrase(path, nil)
+}
+
+// Open reads a key from file using the provided passphrase, returning a Key
+func OpenWithPassphrase(path string, passphrase []byte) (Key, error) {
 	// Read the key file
 	keyData, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read %v: %w", path, err)
 	}
 
-	return Parse(keyData)
+	return ParseWithPassphrase(keyData, passphrase)
 }
 
 // ParseString is a shortcut for calling Parse with a string
@@ -57,8 +66,13 @@ func ParseString(s string) (Key, error) {
 	return Parse([]byte(s))
 }
 
-// Parse parsses raw key bytes
+// Parse parses raw key bytes
 func Parse(bytes []byte) (Key, error) {
+	return ParseWithPassphrase(bytes, nil)
+}
+
+// Parse parses raw key bytes using the provided passphrase
+func ParseWithPassphrase(bytes []byte, passphrase []byte) (Key, error) {
 	// Try to parse the key as a JWK
 	if key, err := jwk.ParseKey(bytes); err == nil {
 		jwk.AssignKeyID(key)
@@ -89,6 +103,25 @@ func Parse(bytes []byte) (Key, error) {
 			return converted, nil
 		} else {
 			return nil, err
+		}
+
+		// Handle the ssh.PassphraseMissingError error type
+	} else if _, ok := err.(*ssh.PassphraseMissingError); ok {
+		// If no passphrase was provided then return the error directly to
+		// indicate the caller must provide a passphrase to parse this key
+		if len(passphrase) == 0 {
+			return nil, err
+		}
+
+		// Try to get a raw crypto/* type from an OpenSSH passphrase protected key
+		if key, err := ssh.ParseRawPrivateKeyWithPassphrase(bytes, passphrase); err == nil {
+			// Load the raw crypto/* type
+			if converted, err := from(key); err == nil {
+				// Return the loaded key
+				return converted, nil
+			} else {
+				return nil, err
+			}
 		}
 	}
 
@@ -137,6 +170,35 @@ func from(raw interface{}) (*keyImpl, error) {
 
 	// Handle other types more directly
 	switch raw := raw.(type) {
+	// Handle ssh-agent keys, which do not implement the ssh.CryptoPublicKey interface, by
+	// marshalling the public key to ssh wire format then loading the key using
+	// ssh.ParsePublicKey(). This returns a type that implements the ssh.CryptoPublicKey
+	// interface. Using the resulting ssh.CryptoPublicKey interface it is possible to
+	// get the crypto/* raw types, which can be used to create a JWK, and thus a keyImpl.
+	case *agent.Key:
+		// Dump the public key from the agent in ssh wire format
+		wireFormat := raw.Marshal()
+
+		// Parse the wire format dump of the key using non-agent functions
+		sshPublicKey, err := ssh.ParsePublicKey(wireFormat)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse wire-formatted key: %v", err)
+		}
+
+		// Use the ssh.CryptoPublicKey interface to access the raw cryto/* type of the key
+		if cryptoPublicKey, ok := sshPublicKey.(ssh.CryptoPublicKey); ok {
+			// Create a JWK based on the resulting public key
+			if convertedToJWK, err := jwk.FromRaw(cryptoPublicKey.CryptoPublicKey()); err == nil {
+				// Assign the key ID to the JWK
+				jwk.AssignKeyID(convertedToJWK)
+
+				// Return a keyImpl based on the JWK
+				return &keyImpl{jwk: convertedToJWK}, nil
+			}
+		}
+
+		// Return an error if the ssh.CryptoPublicKey interface could not be used
+		return nil, fmt.Errorf("failed to convert %T to ssh.CryptoPublicKey", raw)
 	case *ed25519.PrivateKey:
 		if convertedToJWK, err := jwk.FromRaw(*raw); err == nil {
 			jwk.AssignKeyID(convertedToJWK)
@@ -193,6 +255,125 @@ func (k *keyImpl) SignJWT(token jwt.Token) ([]byte, error) {
 
 	// Serialize the token, returning any associated error as well
 	return serializer.Serialize(token)
+}
+
+// SignJWTWithAgent signs a jwt.Token using an ssh-agent and returns the encoded compact token
+func (k *keyImpl) SignJWTWithAgent(agentClient agent.ExtendedAgent, token jwt.Token) ([]byte, error) {
+	// Determine the key ID of this key
+	signingKeyFingerprint, err := k.SSHFingerprintSHA256()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create fingerprint: %w", err)
+	}
+
+	// Get the list of keys loaded in the agent
+	agentKeys, err := agentClient.List()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list keys in agent: %w", err)
+	}
+
+	// Determine whether the key we want to sign with is loaded in the agent
+	keyIsLoaded := func() bool {
+		// Iterate over the keys loaded in the agent
+		for _, agentKey := range agentKeys {
+			// Compute the fingerprint of this key
+			agentKeyFingerprint := ssh.FingerprintSHA256(agentKey)
+
+			// Compare the fingerprint to that of the key we want to sign with
+			if agentKeyFingerprint == signingKeyFingerprint {
+				// Return true when the fingreprints match
+				return true
+			}
+		}
+
+		// Return false, as no loaded keys matched the signing key fingerprint
+		return false
+	}()
+
+	// Return an error if the signing key isn't loaded into the ssh-agent
+	if !keyIsLoaded {
+		return nil, fmt.Errorf("signing key is not loaded in ssh-agent")
+	}
+
+	// Determine which signature algorithm should be used
+	signatureAlgorithm, err := k.JWASignatureAlgorithm()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine signature algorithm: %w", err)
+	}
+
+	// Create the protected headers for the JWT
+	protectedHeaders := jws.NewHeaders()
+	protectedHeaders.Set(jws.AlgorithmKey, signatureAlgorithm)
+	protectedHeaders.Set(jws.TypeKey, "JWT")
+	protectedHeaders.Set(jws.KeyIDKey, signingKeyFingerprint)
+	protectedHeadersJSON, err := json.Marshal(protectedHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize protected headers: %w", err)
+	}
+
+	// Create the payload to be signed
+	tokenJSON, err := jwt.NewSerializer().Serialize(token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize token: %w", err)
+	}
+
+	// Create the string to sign
+	stringToSign := fmt.Sprintf("%s.%s", protectedHeadersJSON, tokenJSON)
+
+	// Create the signature
+	signature, err := func() ([]byte, error) {
+		// Get the ssh.PublicKey of the signing key
+		publicKey, err := k.SSHPublicKey()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get ssh.PublicKey: %w", err)
+		}
+
+		// Create the signature differently depending on the signature algorithm
+		switch signatureAlgorithm {
+		// PS512 signatures need to be made with SignWithFlags() since RSA keys will by default use an insecure
+		// signing method
+		case jwa.PS512:
+			sshSignature, err := agentClient.SignWithFlags(publicKey, []byte(stringToSign), agent.SignatureFlagRsaSha512)
+			if err != nil {
+				return nil, err
+			}
+			return sshSignature.Blob, nil
+
+		// Most signatures are performed using the default Sign() method
+		case jwa.EdDSA, jwa.ES256, jwa.ES384, jwa.ES512:
+			sshSignature, err := agentClient.Sign(publicKey, []byte(stringToSign))
+			if err != nil {
+				return nil, err
+			}
+			return sshSignature.Blob, nil
+
+		// Only perform explicitly supported signature algorithms
+		default:
+			return nil, fmt.Errorf("unsupported signature algorithm: %s", signatureAlgorithm)
+		}
+	}()
+
+	// Check for signing errors
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign: %w", err)
+	}
+
+	// Create a new JWM (JSON Web Message) with the payload, headers, and signature
+	message := jws.NewMessage().
+		SetPayload(tokenJSON).
+		AppendSignature(
+			jws.NewSignature().
+				SetProtectedHeaders(protectedHeaders).
+				SetSignature(signature),
+		)
+
+	// Encode the JWM in compact format
+	encoded, err := jws.Compact(message)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode compact message: %w", err)
+	}
+
+	// Return the JWT as an encoded compact message
+	return encoded, nil
 }
 
 // IsPrivate returns true if this is an asymmetric private key
