@@ -32,6 +32,24 @@ import (
 	"github.com/nuts-foundation/jwt-generator/internal/keyring"
 )
 
+const usage = `nuts-jwt-generator is a utility for generating tokens to authenticate
+to token_v2 protected nuts-node APIs. The tokens are compact encoded
+JWTs (JSON Web Tokens) which are signed by a known cryptography key
+The keys permitted to create valid tokens are configured on the nuts
+node.
+
+To create a JWT using an SSH private key file:
+nuts-jwt-generator -i ~/.ssh/id_nutsapi --host nuts-server-001
+
+To create a JWT using a key loaded in ssh-agent:
+nuts-jwt-generator -i ~/.ssh/id_agentkey.pub --host nuts-server-001
+
+To create a JWT using a PEM private key file:
+nuts-jwt-generator -i ~/.nuts/apikey.pem --host nuts-server-001
+
+To create a JWT using a JWK private key file:
+nuts-jwt-generator -i ~/.nuts/apikey.jwk --host nuts-server-001`
+
 // store the command line arguments in a global struct
 var arguments struct {
 	duration int
@@ -50,8 +68,8 @@ var arguments struct {
 
 // init sets up the command line arguments
 func init() {
-	flag.StringVar(&arguments.host, "host", "", "hostname of nuts node")
-	flag.StringVar(&arguments.user, "user", "", "username (default: key comment)")
+	flag.StringVar(&arguments.host, "host", "", "hostname of nuts node, for aud field of JWT")
+	flag.StringVar(&arguments.user, "user", "", "username (default: key comment or current username/hostname)")
 	flag.StringVar(&arguments.keyFilePath, "i", "", "key file path (private for internal signing, public for ssh-agent signing)")
 	flag.BoolVar(&arguments.listAgentKeys, "list-agent", false, "list SSH keys from ssh-agent")
 	flag.BoolVar(&arguments.quiet, "quiet", false, "disable logging output")
@@ -59,6 +77,15 @@ func init() {
 	flag.BoolVar(&arguments.exportAuthorizedKey, "export-authorized-key", false, "Export the authorized_keys format")
 	flag.BoolVar(&arguments.exportJWKThumbprint, "export-jwk-thumbprint", false, "Export the JWK SHA256 thumbprint")
 	flag.BoolVar(&arguments.exportSSHFingerprint, "export-ssh-fingerprint", false, "Export the SSH SHA256 fingerprint")
+
+	// Show a summary of usage when -h/--help is passed
+	flag.Usage = func() {
+		out := flag.CommandLine.Output()
+		fmt.Fprintf(out, "%s\n", usage)
+		fmt.Fprint(out, "\n")
+		fmt.Fprint(out, "Usage of nuts-jwt-generator:\n")
+		flag.PrintDefaults()
+	}
 }
 
 func main() {
@@ -129,8 +156,9 @@ func main() {
 
 		// Print the generated JWT
 		fmt.Printf("%s\n", signed)
-		// When provided a public key sign the JWT using the ssh-agent
+
 	} else {
+		// When provided a public key sign the JWT using the ssh-agent
 		signed, err := key.SignJWTWithAgent(connectAgent(), token)
 		if err != nil {
 			log.Fatalf("failed to sign JWT with ssh-agent: %v", err)
