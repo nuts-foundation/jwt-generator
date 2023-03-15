@@ -6,7 +6,7 @@ To install the tool download a binary from the github releases page.
 
 On a MacOS/Linux system you can copy/paste the URL of the binary, replacing $BINARY_URL in the following command:
 ```
-curl -o /usr/local/bin/nuts-jwt-generator $BINARY_URL
+curl --fail -L -o /usr/local/bin/nuts-jwt-generator $BINARY_URL
 chmod +x /usr/local/bin/nuts-jwt-generator
 ```
 
