@@ -4,7 +4,7 @@ nuts-jwt-generator is a utility for generating tokens to authenticate to token_v
 ## Installing
 To install the tool download a binary from the github releases page.
 
-On a MacOS/Linux system you can copy/paste the URL of the binary, relpacing $BINARY_URL in the following command:
+On a MacOS/Linux system you can copy/paste the URL of the binary, replacing $BINARY_URL in the following command:
 ```
 curl -o /usr/local/bin/nuts-jwt-generator $BINARY_URL
 chmod +x /usr/local/bin/nuts-jwt-generator $BINARY_URL
