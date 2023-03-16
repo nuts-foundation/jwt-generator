@@ -1,5 +1,5 @@
 # nuts-jwt-generator
-nuts-jwt-generator is a utility for generating tokens to authenticate to token_v2 protected nuts-node APIs. The tokens are compact encoded JWTs (JSON Web Tokens) which are signed by a known cryptography key. The keys permitted to create valid tokens are configured on the nuts node.
+nuts-jwt-generator is a utility for generating tokens to authenticate to [token_v2](https://nuts-node.readthedocs.io/en/stable/pages/deployment/production-configuration.html#authentication) protected nuts-node APIs. The tokens are compact encoded JWTs (JSON Web Tokens) which are signed by a known cryptography key. The keys permitted to create valid tokens are configured on the nuts node.
 
 ## Installing
 To install the tool download a binary from the github releases page.
