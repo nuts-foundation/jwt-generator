@@ -21,53 +21,6 @@ The following key file formats are supported:
 - JWK
 - PEM
 
-### Key Generation (OpenSSH)
-To generate an Ed25519 key:
-```
-ssh-keygen -t ed25519 -f <path-to-private-key>
-```
-
-To generate an ECDSA key:
-```
-ssh-keygen -t ecdsa -b 521 -f <path-to-private-key>
-```
-
-To generate an RSA key:
-```
-ssh-keygen -t rsa -b 4096 -f <path-to-private-key>
-```
-
-### Key Generation (PEM/OpenSSL)
-To generate an Ed25519 key:
-```
-openssl genpkey -algorithm ed25519 -out <path-to-private-pem>
-openssl pkey -in <path-to-private-pem> -pubout -out <path-to-public-pem>
-```
-
-To generate an ECDSA (P-521) key:
-```
-openssl ecparam -name secp521r1 -genkey -noout -out <path-to-private-pem>
-openssl ec -in <path-to-private-pem> -pubout -out <path-to-public-pem>
-```
-
-To generate an ECDSA (P-384) key:
-```
-openssl ecparam -name secp384r1 -genkey -noout -out <path-to-private-pem>
-openssl ec -in <path-to-private-pem> -pubout -out <path-to-public-pem>
-```
-
-To generate an ECDSA (P-256) key:
-```
-openssl ecparam -name secp256k1 -genkey -noout -out <path-to-private-pem>
-openssl ec -in <path-to-private-pem> -pubout -out <path-to-public-pem>
-```
-
-To generate an RSA (4096-bit) key:
-```
-openssl genrsa -out <path-to-private-pem> 4096
-openssl rsa -in <path-to-private-pem> -pubout -out <path-to-public-pem>
-```
-
 ## Usage
 
 ### To create a JWT using an SSH private key file
@@ -140,4 +93,54 @@ make build
 To build a release for all supported architectures:
 ```
 make release
+```
+
+## Key Generation
+To use this utility you must already be in possession of a compatible private key. The following commands can be used on Mac/Linux/Windows to generate keys.
+
+### Key Generation (OpenSSH)
+To generate an Ed25519 key:
+```
+ssh-keygen -t ed25519 -f <path-to-private-key>
+```
+
+To generate an ECDSA (P-521) key:
+```
+ssh-keygen -t ecdsa -b 521 -f <path-to-private-key>
+```
+
+To generate an RSA (4096-bit) key:
+```
+ssh-keygen -t rsa -b 4096 -f <path-to-private-key>
+```
+
+### Key Generation (PEM/OpenSSL)
+To generate an Ed25519 key:
+```
+openssl genpkey -algorithm ed25519 -out <path-to-private-pem>
+openssl pkey -in <path-to-private-pem> -pubout -out <path-to-public-pem>
+```
+
+To generate an ECDSA (P-521) key:
+```
+openssl ecparam -name secp521r1 -genkey -noout -out <path-to-private-pem>
+openssl ec -in <path-to-private-pem> -pubout -out <path-to-public-pem>
+```
+
+To generate an ECDSA (P-384) key:
+```
+openssl ecparam -name secp384r1 -genkey -noout -out <path-to-private-pem>
+openssl ec -in <path-to-private-pem> -pubout -out <path-to-public-pem>
+```
+
+To generate an ECDSA (P-256) key:
+```
+openssl ecparam -name secp256k1 -genkey -noout -out <path-to-private-pem>
+openssl ec -in <path-to-private-pem> -pubout -out <path-to-public-pem>
+```
+
+To generate an RSA (4096-bit) key:
+```
+openssl genrsa -out <path-to-private-pem> 4096
+openssl rsa -in <path-to-private-pem> -pubout -out <path-to-public-pem>
 ```
